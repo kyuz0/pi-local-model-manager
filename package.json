@@ -12,7 +12,8 @@
   "files": [
     "extensions/",
     "scripts/",
-    "README.md"
+    "README.md",
+    "docs/"
   ],
   "pi": {
     "extensions": [
