@@ -33,6 +33,7 @@ export function reconcile(config, manifest, reports, { adoptLocal = false, maxTo
     if (!isLocalEndpoint(report.endpoint)) throw new Error('Model sync currently accepts literal loopback endpoints or the configured host-model gateway');
     if (seen.has(report.endpoint)) throw new Error('Duplicate endpoint report');
     seen.add(report.endpoint);
+    for (const skipped of report.skippedModels ?? []) warnings.push({endpoint: report.endpoint, model: skipped.id, reason: skipped.reason});
     const owned = Object.entries(state.entries).filter(([, e]) => e.endpoint === report.endpoint).map(([id]) => id);
     const adopt = adoptLocal ? Object.entries(next.providers).filter(([id, p]) => {
       if (state.entries[id] || !object(p)) return false;
@@ -89,7 +90,7 @@ export function reconcile(config, manifest, reports, { adoptLocal = false, maxTo
         }
         if (model.imageSupport === null || model.imageSupport === undefined) warnings.push({ provider: destination, endpoint: report.endpoint, model: model.id, reason: 'Image support unknown; emitted text-only input' });
         const old = previous?.models?.find(m => m.id === model.id);
-        let generatedModel = { ...old, id: model.id, name: old?.name ?? model.id, contextWindow: model.contextWindow,
+        let generatedModel = { ...old, id: model.id, name: old?.name && old.name !== model.id ? old.name : model.displayName ?? model.id, contextWindow: model.contextWindow,
           maxTokens: Math.min(maxTokens, model.contextWindow, model.maxCompletionTokensAdvertised ?? maxTokens),
           input: model.imageSupport === true ? ['text', 'image'] : ['text'], reasoning: old?.reasoning ?? false,
           cost: old?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
@@ -101,7 +102,7 @@ export function reconcile(config, manifest, reports, { adoptLocal = false, maxTo
         const custom = hasExplicitThinking(old, previous) && priorSource !== 'default' && priorSource !== 'override' && !legacyDefault;
         const selected = override?.profile ?? (!custom ? model.thinkingProfile : null);
         if (selected) {
-          generatedModel = applyThinking(generatedModel, thinkingConfig(selected, override?.thinkingLevelMap, model.contextWindow));
+          generatedModel = applyThinking(generatedModel, thinkingConfig(selected, override ? override.thinkingLevelMap : model.thinkingLevelMap, model.contextWindow));
           thinking[model.id] = { source: override ? 'override' : 'default', profile: selected };
           if (!override && model.thinkingWarning) warnings.push({ provider: destination, endpoint: report.endpoint, model: model.id, reason: model.thinkingWarning });
         } else if (custom) thinking[model.id] = { source: 'preserved' };

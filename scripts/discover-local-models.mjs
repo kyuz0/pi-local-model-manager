@@ -50,30 +50,43 @@ export async function probe(url, options = {}) {
       return { ...report, status: 'invalid-model-list' };
     }
     report.status = body.data.length ? 'model-list' : 'empty-model-list';
-    // /props is a read-only llama.cpp metadata endpoint. Its absence is expected elsewhere.
+    // /props supplies optional llama.cpp-compatible metadata (including Radiance).
     let props;
     if (body.data.length) {
       try { props = await readJson(`${url}/props`, options); } catch { /* Optional evidence. */ }
+    }
+    let radianceInfo;
+    if (body.data.some(m => m.owned_by === 'radiance')) {
+      try { radianceInfo = await readJson(`${url}/server_info`, options); } catch { /* Optional metadata. */ }
     }
     const serverContext = positive(props?.default_generation_settings?.n_ctx);
     report.models = body.data.map(m => {
       const context = serverContext ?? positive(m.context_length) ?? positive(m.max_model_len);
       const hasServerVision = body.data.length === 1 && typeof props?.modalities?.vision === 'boolean';
-      const vision = hasServerVision ? props.modalities.vision : modelVision(m);
+      const radiance = m.owned_by === 'radiance';
+      const metadata = radiance && radianceInfo?.server?.model === m.id ? radianceInfo.engine : undefined;
+      const engine = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : undefined;
+      const radianceVision = radiance && typeof m.capabilities?.image === 'boolean';
+      const vision = radianceVision ? m.capabilities.image : hasServerVision ? props.modalities.vision : modelVision(m);
       const thinking = discoverThinking(m, props, body.data.length === 1);
       return {
         id: m.id,
+        displayName: typeof m.name === 'string' && m.name.trim() ? m.name : m.id,
+        architecture: typeof engine?.arch === 'string' ? engine.arch : null,
+        containerQuantization: typeof engine?.quant === 'string' ? engine.quant : null,
+        metadataEvidence: engine ? '/server_info.engine (matching served model); container quantization may describe mixed weights incompletely' : null,
         availability: m.state ?? m.status?.value ?? 'unknown',
-        engineHint: m.owned_by === 'ds4.c' ? 'DwarfStar-family (build unverified)' : m.owned_by === 'gufo' ? 'Gufo (build unverified)' : serverContext ? 'llama.cpp-compatible props' : 'unknown',
+        engineHint: radiance ? 'Radiance' : m.owned_by === 'ds4.c' ? 'DwarfStar-family (build unverified)' : m.owned_by === 'gufo' ? 'Gufo (build unverified)' : serverContext ? 'llama.cpp-compatible props' : 'unknown',
         thinkingSupport: thinking.support,
         thinkingProfile: thinking.profile,
+        thinkingLevelMap: thinking.levelMap,
         thinkingEvidence: thinking.evidence,
         thinkingWarning: thinking.warning,
         contextWindow: context,
         contextEvidence: serverContext ? '/props.default_generation_settings.n_ctx (single-server metadata; model mapping unverified)' : positive(m.context_length) ? '/v1/models.context_length (server-advertised)' : positive(m.max_model_len) ? '/v1/models.max_model_len (server-advertised)' : 'unknown',
-        trainedContext: positive(m.meta?.n_ctx_train),
+        trainedContext: positive(engine?.n_ctx_train) ?? positive(m.meta?.n_ctx_train),
         imageSupport: vision,
-        imageSupportEvidence: hasServerVision ? '/props.modalities.vision' : vision !== null ? '/v1/models.architecture.input_modalities (server-advertised)' : 'unknown; server supplied no supported vision metadata',
+        imageSupportEvidence: radianceVision ? '/v1/models.capabilities.image' : hasServerVision ? '/props.modalities.vision' : vision !== null ? '/v1/models.architecture.input_modalities (server-advertised)' : 'unknown; server supplied no supported vision metadata',
         maxCompletionTokensAdvertised: positive(m.top_provider?.max_completion_tokens),
         supportedParameters: Array.isArray(m.supported_parameters) ? m.supported_parameters.filter(p => typeof p === 'string') : null,
         apiCompatibility: 'model-list only; inference unverified',
@@ -85,9 +98,14 @@ export async function probe(url, options = {}) {
         m.contextWindow = positive(body.data[i].context_length) ?? positive(body.data[i].max_model_len);
         m.contextEvidence = m.contextWindow ? '/v1/models (server-advertised)' : 'unknown; /props model mapping ambiguous';
         // Per-model advertised modalities remain valid when generic props are ambiguous.
-        m.imageSupport = modelVision(body.data[i]);
+        m.imageSupport = body.data[i].owned_by === 'radiance' && typeof body.data[i].capabilities?.image === 'boolean' ? body.data[i].capabilities.image : modelVision(body.data[i]);
       });
     }
+    report.skippedModels = body.data.filter(m => m.owned_by === 'radiance' && m.capabilities?.chat === false)
+      .map(m => ({ id: m.id, reason: 'Radiance reports no chat support' }));
+    const skipped = new Set(report.skippedModels.map(m => m.id));
+    report.models = report.models.filter(m => !skipped.has(m.id));
+    if (!report.models.length) report.status = 'empty-model-list';
   } catch (error) {
     const code = error.cause?.code;
     const causes = error.cause?.errors ?? [];

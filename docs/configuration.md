@@ -14,6 +14,19 @@ Settings live in `local-pi-models.json` inside Pi's agent directory:
 
 Refresh preserves unrelated providers, reports configuration conflicts and creates a private backup. Unreachable servers retain their last known entries. Closed ports and empty inventories remove extension-managed entries.
 
+## Radiance
+
+Radiance discovery reads the model's advertised image support and accepted thinking
+levels. It keeps the API model ID unchanged and preserves custom display names.
+`/server_info` adds architecture and container quantization to discovery output
+when its served model matches; this quantization label may not describe every
+weight type in a mixed-precision file.
+
+If Radiance reports an architecture name such as `qwen4exp`, start it with
+`--served-model-name "Qwen3.8-Flash-Next IQ4R"` using the identity of the file you
+actually loaded. Cockpit supplies this from its selected model. Discovery cannot
+recover an exact model or quantization from a generic `/models/model.rad` path.
+
 ## Thinking controls
 
 Thinking controls follow the detected engine and model family. For an alias or custom server, add an exact override:

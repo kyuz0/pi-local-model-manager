@@ -51,6 +51,26 @@ export function validateThinkingOverrides(value = []) {
 }
 
 export function discoverThinking(model, props, singleModel) {
+  if (model.owned_by === 'radiance') {
+    const caps = model.capabilities;
+    if (caps?.reasoning === false) return {
+      support: false, profile: 'disabled', evidence: '/v1/models.capabilities.reasoning', warning: null,
+    };
+    const efforts = caps?.reasoning_efforts;
+    if (caps?.reasoning === true && Array.isArray(efforts) && efforts.every(e => typeof e === 'string')) {
+      // Radiance's "minimal" disables thinking; do not present it as a reasoning level.
+      const accepted = Object.fromEntries(['low', 'medium', 'high', 'xhigh', 'max']
+        .filter(level => efforts.includes(level)).map(level => [level, level]));
+      if (Object.keys(accepted).length) return {
+        support: true, profile: 'openai-effort',
+        levelMap: map({ ...(efforts.includes('none') ? { off: 'none' } : {}), ...accepted }),
+        evidence: '/v1/models.capabilities.reasoning_efforts (template-probed accepted values)', warning: null,
+      };
+    }
+    return { support: caps?.reasoning === true ? true : null, profile: null,
+      evidence: '/v1/models.capabilities; accepted thinking levels unknown',
+      warning: 'Radiance did not advertise accepted thinking levels; set an exact endpoint/model override if needed.' };
+  }
   const advertised = Array.isArray(model.supported_parameters) && model.supported_parameters.includes('reasoning_effort');
   const caps = singleModel ? props?.chat_template_caps : undefined;
   const engine = model.owned_by === 'ds4.c' ? 'dwarfstar' : model.owned_by === 'gufo' ? 'gufo' :
