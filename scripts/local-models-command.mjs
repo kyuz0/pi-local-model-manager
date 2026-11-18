@@ -1,7 +1,7 @@
 import { readFile, mkdir, open, rename, unlink, lstat } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { expandTargets, scan } from './discover-local-models.mjs';
+import { expandTargets, gatewayEndpoint, scan } from './discover-local-models.mjs';
 import { DEFAULT_MAX_TOKENS } from './model-limits.mjs';
 import { isLocalEndpoint, syncFile } from './sync-local-models.mjs';
 import { validateThinkingOverrides } from './thinking.mjs';
@@ -11,11 +11,12 @@ const help = '/local-models preview — scan and show proposed changes\n/local-m
 
 function validate(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid local-pi-models.json');
-  if (Object.keys(config).some(key => !['host', 'ports', 'maxTokens', 'thinkingOverrides'].includes(key))) throw new Error('Unsupported local model configuration field');
+  if (Object.keys(config).some(key => !['host', 'ports', 'maxTokens', 'thinkingOverrides', 'gateway'].includes(key))) throw new Error('Unsupported local model configuration field');
   const settings = { ...defaults, ...config };
   if (typeof settings.host !== 'string' || typeof settings.ports !== 'string') throw new Error('host and ports must be strings');
   const targets = expandTargets(settings.host, settings.ports);
   if (!targets.every(isLocalEndpoint)) throw new Error('Refresh supports loopback hosts or local-model.internal on configured ports');
+  if (settings.gateway !== undefined) gatewayEndpoint(targets[0], settings.gateway);
   if (!Number.isSafeInteger(settings.maxTokens) || settings.maxTokens < 1) throw new Error('maxTokens must be a positive integer');
   if (settings.thinkingOverrides !== undefined) settings.thinkingOverrides = validateThinkingOverrides(settings.thinkingOverrides);
   return settings;
@@ -84,7 +85,7 @@ export function registerLocalModels(pi, { getAgentDir, scanModels = scan, syncMo
         }
         if (!ctx.isIdle()) throw new Error('Wait for the current Pi turn to finish before refreshing models');
         ctx.ui.notify(`Scanning ${targets.length} configured local endpoints…`, 'info');
-        const reports = await scanModels(targets);
+        const reports = await scanModels(targets, { gateway: settings.gateway });
         const result = await syncModels(target, reports, { write: action === 'refresh', adoptLocal: true, maxTokens: settings.maxTokens, ...(settings.thinkingOverrides !== undefined ? { thinkingOverrides: settings.thinkingOverrides } : {}) });
         written = action === 'refresh';
         show(formatResult(result));

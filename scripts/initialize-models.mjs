@@ -6,11 +6,11 @@ import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { readSettings, formatResult } from './local-models-command.mjs';
 import { expandTargets, scan } from './discover-local-models.mjs';
-import { syncFile } from './sync-local-models.mjs';
+import { modelBaseUrl, syncFile } from './sync-local-models.mjs';
 
 export async function initializeModels(agentDir, { preview = false, scanModels = scan, log = console.log } = {}) {
   const settings = await readSettings(join(agentDir, 'local-pi-models.json'));
-  const reports = await scanModels(expandTargets(settings.host, settings.ports));
+  const reports = await scanModels(expandTargets(settings.host, settings.ports), { gateway: settings.gateway });
   const target = join(agentDir, 'models.json');
   const result = await syncFile(target, reports, { write: !preview, adoptLocal: true,
     maxTokens: settings.maxTokens,
@@ -22,7 +22,7 @@ export async function initializeModels(agentDir, { preview = false, scanModels =
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   const usable = reports.flatMap(report => report.status === 'model-list' ? report.models.filter(model =>
     ['unknown','loaded','ready','running'].includes(model.availability ?? 'unknown') &&
-    Object.values(providers).some(provider => provider.baseUrl?.replace(/\/$/, '') === report.endpoint+'/v1' &&
+    Object.values(providers).some(provider => provider.baseUrl?.replace(/\/$/, '') === modelBaseUrl(report) &&
       provider.models?.some(saved => saved.id === model.id && Number.isSafeInteger(saved.contextWindow) && saved.contextWindow > 0))
   ) : []);
   if (!usable.length) throw Object.assign(new Error('No usable local model was discovered. Start the server on the configured ports and ensure it reports its context limit (or supply that limit in private model configuration). Refresh the catalogue after starting the server.'), { code: 'NO_USABLE_MODEL' });

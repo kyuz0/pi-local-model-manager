@@ -7,6 +7,29 @@ test('explicit ranges deduplicate and reject invalid or excessive scans', () => 
   for (const ports of ['0', '65536', '9000-8000', '1-300', 'abc', '8000,']) assert.throws(() => expandTargets('localhost', ports));
   assert.equal(expandTargets('::1', '8000')[0], 'http://[::1]:8000');
 });
+
+test('gateway probes keep the original endpoint and route each request by port', async () => {
+  const gateway = 'http://127.0.0.1:19431/r/local-{port}';
+  const requests = [];
+  const targets = expandTargets('local-model.internal', '8000,8001');
+  const reports = await scan(targets, { gateway, fetchImpl: async (url, flags) => {
+    requests.push(url);
+    assert.equal(flags.redirect, 'manual');
+    assert.equal(flags.headers, undefined);
+    if (url.includes('local-8001')) return new Response(null, { status: 401 });
+    return Response.json(url.endsWith('/v1/models') ? { data: [{ id: 'example', context_length: 8192 }] } : {});
+  } });
+  assert.deepEqual(reports.map(report => report.endpoint), targets);
+  assert.equal(reports[0].gateway, gateway);
+  assert.equal(reports[1].httpStatus, 401);
+  assert.deepEqual(requests.sort(), [
+    'http://127.0.0.1:19431/r/local-8000/props',
+    'http://127.0.0.1:19431/r/local-8000/v1/models',
+    'http://127.0.0.1:19431/r/local-8001/v1/models',
+  ]);
+  await assert.rejects(probe(targets[0], { gateway: 'https://outside.example/{port}' }), /loopback/);
+  await assert.rejects(probe('http://localhost:8000', { gateway }), /loopback/);
+});
 const fixture = (models, props = {}) => ({ fetchImpl: async url => Response.json(url.endsWith('/props') ? props : { data: models }) });
 test('effective server context is distinct from trained context', async () => {
   const result = await probe('http://localhost:8000', fixture([{ id: 'fixture', meta: { n_ctx_train: 131072 } }], { default_generation_settings: { n_ctx: 32768 }, modalities: { vision: false } }));

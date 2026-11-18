@@ -50,3 +50,9 @@ PI_CODING_AGENT_DIR=/path/to/agent node scripts/initialize-models.mjs
 ```
 
 The initializer reads the same settings. Exit code `3` means no usable model is available; the launcher can open the editor and offer a later refresh. `--preview` shows changes without writing them.
+
+Launchers that provide a loopback proxy can set `gateway` to a URL such as
+`http://127.0.0.1:19431/r/local-{port}` when using `local-model.internal`.
+Discovery and the generated model connection use the corresponding proxy route.
+Model identity and thinking overrides continue to use the original server endpoint.
+The proxy supplies any required credentials.

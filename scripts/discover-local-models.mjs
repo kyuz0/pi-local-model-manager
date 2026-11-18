@@ -18,6 +18,16 @@ export function expandTargets(host, ports) {
   return [...unique].map(port => new URL(`http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${port}`).origin);
 }
 
+export function gatewayEndpoint(endpoint, gateway) {
+  const target = new URL(endpoint);
+  if (target.protocol !== 'http:' || target.hostname !== 'local-model.internal' ||
+      target.href !== target.origin + '/' || typeof gateway !== 'string' ||
+      !/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}(?:\/[a-z0-9-]+)*\/[a-z0-9-]*\{port\}$/.test(gateway)) {
+    throw new Error('Use a loopback model gateway with a {port} suffix for local-model.internal.');
+  }
+  return new URL(gateway.replace('{port}', target.port || '80')).href;
+}
+
 export async function readJson(url, { timeoutMs = 3000, fetchImpl = fetch } = {}) {
   const response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual' });
   if (!response.ok) {
@@ -44,8 +54,10 @@ function modelVision(model) {
 
 export async function probe(url, options = {}) {
   const report = { endpoint: url, status: 'unknown', models: [] };
+  const upstream = options.gateway ? gatewayEndpoint(url, options.gateway) : url;
+  if (options.gateway) report.gateway = options.gateway;
   try {
-    const body = await readJson(`${url}/v1/models`, options);
+    const body = await readJson(`${upstream}/v1/models`, options);
     if (!Array.isArray(body?.data) || !body.data.every(m => m && typeof m.id === 'string' && m.id.length) || new Set(body.data.map(m => m.id)).size !== body.data.length) {
       return { ...report, status: 'invalid-model-list' };
     }
@@ -53,11 +65,11 @@ export async function probe(url, options = {}) {
     // /props supplies optional llama.cpp-compatible metadata (including Radiance).
     let props;
     if (body.data.length) {
-      try { props = await readJson(`${url}/props`, options); } catch { /* Optional evidence. */ }
+      try { props = await readJson(`${upstream}/props`, options); } catch { /* Optional evidence. */ }
     }
     let radianceInfo;
     if (body.data.some(m => m.owned_by === 'radiance')) {
-      try { radianceInfo = await readJson(`${url}/server_info`, options); } catch { /* Optional metadata. */ }
+      try { radianceInfo = await readJson(`${upstream}/server_info`, options); } catch { /* Optional metadata. */ }
     }
     const serverContext = positive(props?.default_generation_settings?.n_ctx);
     report.models = body.data.map(m => {
@@ -111,6 +123,7 @@ export async function probe(url, options = {}) {
     const causes = error.cause?.errors ?? [];
     report.status = code === 'ECONNREFUSED' || causes.length && causes.every(e => e.code === 'ECONNREFUSED') ? 'closed' : error.httpStatus ? 'http-error' : error.name === 'TimeoutError' ? 'timeout' : 'probe-error';
     report.detail = error.message;
+    if (error.httpStatus) report.httpStatus = error.httpStatus;
   }
   return report;
 }

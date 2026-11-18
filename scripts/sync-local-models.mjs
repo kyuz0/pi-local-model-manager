@@ -5,7 +5,7 @@ import { readFile, lstat, open, rename, unlink, mkdir } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { expandTargets, scan } from './discover-local-models.mjs';
+import { expandTargets, gatewayEndpoint, scan } from './discover-local-models.mjs';
 import { DEFAULT_MAX_TOKENS } from './model-limits.mjs';
 import { validateThinkingOverrides, thinkingConfig, hasExplicitThinking, applyThinking } from './thinking.mjs';
 
@@ -20,6 +20,10 @@ export function isLocalEndpoint(endpoint) {
 }
 export function providerId(endpoint) { return `local-lab-${hash(endpoint).slice(0, 16)}`; }
 
+export function modelBaseUrl(report) {
+  return (report.gateway ? gatewayEndpoint(report.endpoint, report.gateway) : report.endpoint) + '/v1';
+}
+
 export function reconcile(config, manifest, reports, { adoptLocal = false, maxTokens = DEFAULT_MAX_TOKENS, thinkingOverrides = [] } = {}) {
   if (!object(config) || config.providers !== undefined && !object(config.providers)) throw new Error('Invalid models.json providers');
   if (!object(manifest) || manifest.version !== 1 || !object(manifest.entries)) throw new Error('Invalid ownership manifest');
@@ -33,6 +37,10 @@ export function reconcile(config, manifest, reports, { adoptLocal = false, maxTo
     if (!isLocalEndpoint(report.endpoint)) throw new Error('Model sync currently accepts literal loopback endpoints or the configured host-model gateway');
     if (seen.has(report.endpoint)) throw new Error('Duplicate endpoint report');
     seen.add(report.endpoint);
+    const baseUrl = modelBaseUrl(report);
+    if ([401, 403].includes(report.httpStatus)) {
+      warnings.push({ endpoint: report.endpoint, reason: 'Server rejected authentication. Check the API key for this port.' });
+    }
     for (const skipped of report.skippedModels ?? []) warnings.push({endpoint: report.endpoint, model: skipped.id, reason: skipped.reason});
     const owned = Object.entries(state.entries).filter(([, e]) => e.endpoint === report.endpoint).map(([id]) => id);
     const adopt = adoptLocal ? Object.entries(next.providers).filter(([id, p]) => {
@@ -56,9 +64,6 @@ export function reconcile(config, manifest, reports, { adoptLocal = false, maxTo
       const previous = next.providers[id], entry = state.entries[id];
       if (entry && !isDeepStrictEqual(previous, entry.generated) || previous && !entry && !adopt.includes(id)) {
         conflicts.push({ provider: id, reason: 'Existing or edited provider is user-owned; left unchanged' }); continue;
-      }
-      if (entry && previous?.baseUrl !== `${report.endpoint}/v1`) {
-        conflicts.push({ provider: id, reason: 'Owned provider endpoint changed; left unchanged' }); continue;
       }
       if (report.status === 'closed' || report.status === 'empty-model-list') {
         if (previous) {
@@ -117,7 +122,7 @@ export function reconcile(config, manifest, reports, { adoptLocal = false, maxTo
       if (destination !== id && next.providers[destination]) {
         conflicts.push({ provider: id, reason: 'Endpoint provider identity already exists; left unchanged' }); continue;
       }
-      const generated = { ...previous, baseUrl: `${report.endpoint}/v1`, api: 'openai-completions', apiKey: previous?.apiKey ?? 'not-needed',
+      const generated = { ...previous, baseUrl, api: 'openai-completions', apiKey: previous?.apiKey ?? 'not-needed',
         compat: previous?.compat ?? { supportsDeveloperRole: false, supportsReasoningEffort: false }, models };
       // An adopted provider label describes old configuration, not the current server.
       if (destination !== id) delete generated.name;
