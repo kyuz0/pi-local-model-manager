@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { expandTargets, probe, scan, readJson } from '../scripts/discover-local-models.mjs';
 
-test('explicit ranges deduplicate and reject invalid or excessive scans', () => {
+test('explicit ranges deduplicate and follow the TCP port range', () => {
   assert.equal(expandTargets('localhost', '8000-8009,8080-8089,8000').length, 20);
-  for (const ports of ['0', '65536', '9000-8000', '1-300', 'abc', '8000,']) assert.throws(() => expandTargets('localhost', ports));
+  assert.equal(expandTargets('localhost', '1-65535').length, 65535);
+  for (const ports of ['0', '65536', '9000-8000', '1-65536', 'abc', '8000,']) assert.throws(() => expandTargets('localhost', ports));
   assert.equal(expandTargets('::1', '8000')[0], 'http://[::1]:8000');
 });
 
@@ -74,12 +75,15 @@ test('requests forbid redirects and bound response size', async () => {
     return new Response('x'.repeat(1024 * 1024 + 1));
   } }), /1 MiB/);
 });
-test('scan deduplicates targets and bounds concurrent requests', async () => {
+test('large scans deduplicate targets and keep the same request concurrency', async () => {
   let active = 0, peak = 0, calls = 0;
-  const results = await scan(['http://localhost:1', 'http://localhost:2', 'http://localhost:1'], { concurrency: 1, fetchImpl: async () => {
+  const targets = expandTargets('localhost', '8000-10559');
+  const results = await scan([...targets, targets[0]], { concurrency: 4, fetchImpl: async () => {
     calls++; active++; peak = Math.max(peak, active);
     await new Promise(resolve => setImmediate(resolve)); active--;
     return Response.json({ data: [] });
   } });
-  assert.equal(results.length, 2); assert.equal(calls, 2); assert.equal(peak, 1);
+  assert.deepEqual(results.map(report => report.endpoint), targets);
+  assert.equal(calls, 2560);
+  assert.equal(peak, 4);
 });

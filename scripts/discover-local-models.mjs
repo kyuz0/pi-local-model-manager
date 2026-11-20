@@ -11,9 +11,7 @@ export function expandTargets(host, ports) {
     if (!/^\d+(?:-\d+)?$/.test(part)) throw new Error(`Invalid port specification: ${part}`);
     const [start, end = start] = part.split('-').map(Number);
     if (start < 1 || end > 65535 || end < start) throw new Error(`Invalid port range: ${part}`);
-    if (end - start >= 256) throw new Error('At most 256 targets allowed');
     for (let port = start; port <= end; port++) unique.add(port);
-    if (unique.size > 256) throw new Error('At most 256 targets allowed');
   }
   return [...unique].map(port => new URL(`http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${port}`).origin);
 }
@@ -131,7 +129,6 @@ export async function probe(url, options = {}) {
 export async function scan(targets, { concurrency = 4, ...options } = {}) {
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new Error('Concurrency must be 1–16');
   const unique = [...new Set(targets)];
-  if (unique.length > 256) throw new Error('At most 256 targets allowed');
   const results = new Array(unique.length);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(concurrency, unique.length) }, async () => {
